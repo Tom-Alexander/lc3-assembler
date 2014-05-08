@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <title>LC3 Assembler</title>
+    <script src="../dist/lc3-assembler.js"></script>
+    <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/ace/1.1.3/ace.js"></script>
+
+    <script>
+        $(function () {
+            var assemblyCodeView = ace.edit("assemblyCodeView"),
+                    machineCodeView = ace.edit("machineCodeView"),
+                    assembler;
+
+            assemblyCodeView.getSession().setMode("ace/mode/assembly_x86");
+            machineCodeView.getSession().setMode("ace/mode/assembly_x86");
+
+            $('#run-btn').click(function () {
+                var code = assemblyCodeView.getSession().getValue();
+                assembler = new Assembler(code);
+                machineCodeView.getSession().setValue(assembler.machineCode.join('\n'));
+            });
+
+        });
+    </script>
+
+    <style type="text/css" media="screen">
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #ebebeb;
+            font-family: helvetica, verdana, sans-serif;
+        }
+
+        h1 {
+            padding-left: 20px;
+            margin-bottom: 5px;
+        }
+
+        button {
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }
+
+        #assemblyCodeView, #machineCodeView {
+            position: absolute;
+            width: 50%;
+            height: 80%;
+            left: 0;
+        }
+
+        #machineCodeView {
+            left: 50%;
+        }
+
+    </style>
+
+</head>
+<body>
+<h1>LC-3 Assembler</h1>
+<button id="run-btn">Run!</button>
+
+<div id="assemblyCodeView"></div>
+<div id="machineCodeView"></div>
+
+</body>
+</html>

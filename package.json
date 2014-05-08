@@ -1,0 +1,9 @@
+{
+    "name": "lc3-assembler",
+    "version": "0.0.1",
+    "devDependencies": {
+        "grunt" : "~0.4.2",
+        "grunt-contrib-watch" : "~0.6.1",
+        "grunt-browserify" : "~2.0.7"
+    }
+}

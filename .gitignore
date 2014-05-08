@@ -1,0 +1,10 @@
+.idea/
+logs
+*.log
+pids
+*.pid
+*.seed
+lib-cov
+coverage
+.grunt
+node_modules
