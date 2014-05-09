@@ -10,15 +10,27 @@
         $(function () {
             var assemblyCodeView = ace.edit("assemblyCodeView"),
                     machineCodeView = ace.edit("machineCodeView"),
-                    assembler;
+                    errors = [],
+                    assembler = new Assembler();
 
             assemblyCodeView.getSession().setMode("ace/mode/assembly_x86");
-            machineCodeView.getSession().setMode("ace/mode/assembly_x86");
+            machineCodeView.getSession().setMode("ace/mode/text");
+
+            assembler.on('error', function (msg) {
+                errors.push(msg);
+            });
 
             $('#run-btn').click(function () {
                 var code = assemblyCodeView.getSession().getValue();
-                assembler = new Assembler(code);
-                machineCodeView.getSession().setValue(assembler.machineCode.join('\n'));
+                errors = [];
+                assembler.run(code);
+
+                if (errors.length <= 0) {
+                    machineCodeView.getSession().setValue(assembler.machineCode.join('\n'));
+                } else {
+                    machineCodeView.getSession().setValue(errors.join('\n'));
+                }
+
             });
 
         });
@@ -61,7 +73,10 @@
 <h1>LC-3 Assembler</h1>
 <button id="run-btn">Run!</button>
 
-<div id="assemblyCodeView"></div>
+<div id="assemblyCodeView">.ORIG 0x3000
+foo ADD R1, R1, #0
+    BRn foo
+.END</div>
 <div id="machineCodeView"></div>
 
 </body>

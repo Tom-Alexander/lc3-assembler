@@ -14,8 +14,9 @@
 
 "use strict";
 
-var Parse = {},
-    parameterMismatch;
+var AssemblerEvent = require('./AssemblerEvent'),
+    parameterMismatch,
+    Parse = {};
 
 Parse.instruction = {};
 
@@ -79,7 +80,7 @@ Parse.instruction.BR = function (instruction) {
     condition[1] = instruction[0].indexOf('z') >= 0 ? 1 : 0;
     condition[2] = instruction[0].indexOf('p') >= 0 ? 1 : 0;
 
-    return {instruction: '0000' + condition + PCOffset9, labelOffset: 9};
+    return {instruction: '0000' + condition.join('') + PCOffset9, labelOffset: 9};
 };
 
 /**
@@ -401,8 +402,13 @@ Parse.number = function (string, space) {
             } else {
                 value = value.slice(32 - space);
             }
+        } else {
+            AssemblerEvent.emit('error', [string + ' cannot be represented as a ' +
+                'signed number in ' + space + ' bits.']);
         }
 
+    } else {
+        AssemblerEvent.emit('error', ['Expected number but found ' + string + 'instead']);
     }
 
     return value || '';
@@ -445,7 +451,9 @@ Parse.label = function (string, offset, symbols, address) {
 parameterMismatch = function (parameters, normal) {
 
     if (parameters !== normal) {
-        console.error('This operation requires ' + normal + ' parameter/s.');
+        AssemblerEvent.emit('error', ['The number of parameters ' +
+            'supplied does not match the number of parameters ' +
+            'required.']);
     }
 };
 

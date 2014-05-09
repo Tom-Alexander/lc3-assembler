@@ -16,15 +16,14 @@
 "use strict";
 
 var Parse = require('./Parse'),
-    Assembler,
-    proto;
+    AssemblerEvent = require('./AssemblerEvent'),
+    Assembler;
 
-Assembler = function (code) {
-    this.machineCode = this.run(code);
+Assembler = function () {
+    this.events = {};
+    this.on = AssemblerEvent.on;
     return this;
 };
-
-proto = [];
 
 /**
  * convert the assembly code to
@@ -33,48 +32,62 @@ proto = [];
  * @param source
  * @returns {Array}
  */
-proto.run = function (source) {
+Assembler.prototype.run = function (source) {
 
     var address,
         operation,
         counter = 0,
         symbolTable = [],
         machineCode = [],
+        parsedInstruction,
         currentInstruction,
-        code = source.trim().split('\n');
+        didFindEnd = false,
+        code = source.replace(/(^[ \t]*\n)/gm, '').trim().split('\n');
 
     // FIRST PASS
     for (address = 0; address < code.length; address += 1) {
+
         currentInstruction = Parse.line(code[address]);
 
-        if (currentInstruction[0] === '.END') {
-            break;
-        }
+        if (currentInstruction[0]) {
 
-        if (!Parse.instruction.hasOwnProperty(currentInstruction[0].replace('.', '').toUpperCase())) {
-            symbolTable[currentInstruction[0]] = symbolTable[currentInstruction[0]] || counter;
-            currentInstruction.shift();
-        }
-
-        operation = currentInstruction[0].indexOf('BR') >= 0 ? 'BR' : currentInstruction[0];
-        operation = operation.indexOf('.') >= 0 ? operation.replace('.', '') : operation;
-        operation = operation.toUpperCase();
-
-        if (Parse.instruction.hasOwnProperty(operation)) {
-
-            currentInstruction = Parse.instruction[operation](currentInstruction);
-
-            if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
-                machineCode.push(currentInstruction);
-                counter += 1;
+            if (currentInstruction[0] === '.END') {
+                didFindEnd = true;
+                break;
             }
 
-            if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
-                machineCode = machineCode.concat(currentInstruction);
-                counter += currentInstruction.length;
+            if (!Parse.instruction.hasOwnProperty(currentInstruction[0].replace('.', '').toUpperCase() )) {
+                if (currentInstruction[0].indexOf('BR') < 0 ) {
+                    symbolTable[currentInstruction[0]] = counter;
+                    currentInstruction.shift();
+                }
             }
 
+            operation = currentInstruction[0].indexOf('BR') >= 0 ? 'BR' : currentInstruction[0];
+
+            operation = operation.indexOf('.') >= 0 ? operation.replace('.', '') : operation;
+            operation = operation.toUpperCase();
+
+            if (Parse.instruction.hasOwnProperty(operation)) {
+
+                currentInstruction = Parse.instruction[operation](currentInstruction);
+
+                if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
+                    machineCode.push(currentInstruction);
+                    counter += 1;
+                }
+
+                if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
+                    machineCode = machineCode.concat(currentInstruction);
+                    counter += currentInstruction.length;
+                }
+
+            }
         }
+    }
+
+    if (!didFindEnd) {
+        AssemblerEvent.emit('error', ['Expected .END at end of file']);
     }
 
     // SECOND PASS
@@ -82,12 +95,18 @@ proto.run = function (source) {
 
         if (machineCode[address].hasOwnProperty('labelOffset')) {
 
-            machineCode[address] = Parse.label(
+            parsedInstruction = Parse.label(
                 machineCode[address].instruction,
                 machineCode[address].labelOffset,
                 symbolTable,
                 address
             );
+
+            if (parsedInstruction === machineCode[address].instruction) {
+                AssemblerEvent.emit('error', ['instruction references an undefined label.']);
+            }
+
+            machineCode[address] = parsedInstruction;
 
         } else {
             machineCode[address] = machineCode[address].instruction;
@@ -95,14 +114,72 @@ proto.run = function (source) {
 
     }
 
-    return machineCode;
+    this.machineCode = machineCode;
+    return this;
 };
 
-Assembler.prototype = proto;
 module.exports = Assembler;
 global.window.Assembler = Assembler;
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./Parse":2}],2:[function(require,module,exports){
+},{"./AssemblerEvent":2,"./Parse":3}],2:[function(require,module,exports){
+/**
+ * @license
+ *
+ * LC3-Assembler
+ * http://tom-alexander.github.com/lc3-assembler/
+ *
+ * AssemblerEvent.js
+ *
+ * copyright(c) 2014 Tom Alexander
+ * Licensed under the MIT license.
+ *
+ **/
+
+"use strict";
+
+var AssemblerEvent = {},
+    eventStack = {};
+
+/**
+ * adds a callback to the event
+ * stack
+ *
+ * @param eventName
+ * @param callback
+ */
+AssemblerEvent.on = function (eventName, callback) {
+
+    if (!eventStack.hasOwnProperty(eventName)) {
+        eventStack[eventName] = [];
+    }
+
+    eventStack[eventName].push(callback);
+    return this;
+};
+
+/**
+ * Event Emitter
+ * used internally to raise assembly errors
+ *
+ * @param eventName
+ * @param params
+ */
+AssemblerEvent.emit = function (eventName, params) {
+
+    var i;
+
+    if (eventStack.hasOwnProperty(eventName)) {
+
+        for (i = 0; i < eventStack[eventName].length; i += 1) {
+            eventStack[eventName][i].apply(this, params);
+        }
+    }
+
+    return this;
+};
+
+module.exports = AssemblerEvent;
+},{}],3:[function(require,module,exports){
 /**
  * @license
  *
@@ -119,8 +196,9 @@ global.window.Assembler = Assembler;
 
 "use strict";
 
-var Parse = {},
-    parameterMismatch;
+var AssemblerEvent = require('./AssemblerEvent'),
+    parameterMismatch,
+    Parse = {};
 
 Parse.instruction = {};
 
@@ -184,7 +262,7 @@ Parse.instruction.BR = function (instruction) {
     condition[1] = instruction[0].indexOf('z') >= 0 ? 1 : 0;
     condition[2] = instruction[0].indexOf('p') >= 0 ? 1 : 0;
 
-    return {instruction: '0000' + condition + PCOffset9, labelOffset: 9};
+    return {instruction: '0000' + condition.join('') + PCOffset9, labelOffset: 9};
 };
 
 /**
@@ -506,8 +584,13 @@ Parse.number = function (string, space) {
             } else {
                 value = value.slice(32 - space);
             }
+        } else {
+            AssemblerEvent.emit('error', [string + ' cannot be represented as a ' +
+                'signed number in ' + space + ' bits.']);
         }
 
+    } else {
+        AssemblerEvent.emit('error', ['Expected number but found ' + string + 'instead']);
     }
 
     return value || '';
@@ -550,9 +633,11 @@ Parse.label = function (string, offset, symbols, address) {
 parameterMismatch = function (parameters, normal) {
 
     if (parameters !== normal) {
-        console.error('This operation requires ' + normal + ' parameter/s.');
+        AssemblerEvent.emit('error', ['The number of parameters ' +
+            'supplied does not match the number of parameters ' +
+            'required.']);
     }
 };
 
 module.exports = Parse;
-},{}]},{},[1,2])
+},{"./AssemblerEvent":2}]},{},[1,2,3])
