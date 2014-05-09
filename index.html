@@ -2,7 +2,7 @@
 <html>
 <head lang="en">
     <title>LC3 Assembler</title>
-    <script src="dist/lc3-assembler.js"></script>
+    <script src="../dist/lc3-assembler.js"></script>
     <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
     <script src="//cdnjs.cloudflare.com/ajax/libs/ace/1.1.3/ace.js"></script>
 
@@ -10,15 +10,27 @@
         $(function () {
             var assemblyCodeView = ace.edit("assemblyCodeView"),
                     machineCodeView = ace.edit("machineCodeView"),
-                    assembler;
+                    errors = [],
+                    assembler = new Assembler();
 
             assemblyCodeView.getSession().setMode("ace/mode/assembly_x86");
-            machineCodeView.getSession().setMode("ace/mode/assembly_x86");
+            machineCodeView.getSession().setMode("ace/mode/text");
+
+            assembler.on('error', function (msg) {
+                errors.push(msg);
+            });
 
             $('#run-btn').click(function () {
                 var code = assemblyCodeView.getSession().getValue();
-                assembler = new Assembler(code);
-                machineCodeView.getSession().setValue(assembler.machineCode.join('\n'));
+                errors = [];
+                assembler.run(code);
+
+                if (errors.length <= 0) {
+                    machineCodeView.getSession().setValue(assembler.machineCode.join('\n'));
+                } else {
+                    machineCodeView.getSession().setValue(errors.join('\n'));
+                }
+
             });
 
         });
@@ -26,7 +38,7 @@
 
     <style type="text/css" media="screen">
 
-        html, body {
+        html, body {s
             margin: 0;
             padding: 0;
             background: #ebebeb;
@@ -61,7 +73,10 @@
 <h1>LC-3 Assembler</h1>
 <button id="run-btn">Run!</button>
 
-<div id="assemblyCodeView"></div>
+<div id="assemblyCodeView">.ORIG 0x3000
+    foo ADD R1, R1, #0
+    BRn foo
+    .END</div>
 <div id="machineCodeView"></div>
 
 </body>
