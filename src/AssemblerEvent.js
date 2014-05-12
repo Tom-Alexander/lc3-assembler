@@ -14,6 +14,7 @@
 "use strict";
 
 var AssemblerEvent = {},
+    currentLineNumber = null,
     eventStack = {};
 
 /**
@@ -44,6 +45,8 @@ AssemblerEvent.emit = function (eventName, params) {
 
     var i;
 
+    params.push(currentLineNumber);
+
     if (eventStack.hasOwnProperty(eventName)) {
 
         for (i = 0; i < eventStack[eventName].length; i += 1) {
@@ -52,6 +55,22 @@ AssemblerEvent.emit = function (eventName, params) {
     }
 
     return this;
+};
+
+/**
+ * get and/or set the current line number
+ *
+ * @param number
+ * @returns {number}
+ */
+AssemblerEvent.lineNumber = function (number) {
+
+    if (number !== null) {
+        currentLineNumber = number;
+    }
+
+    return currentLineNumber;
+
 };
 
 module.exports = AssemblerEvent;

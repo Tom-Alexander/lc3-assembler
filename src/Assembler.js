@@ -32,87 +32,106 @@ Assembler = function () {
  */
 Assembler.prototype.run = function (source) {
 
-    var address,
+    var firstPass,
+        lineNumber,
+        didFindEnd = false,
+        addressNumber = 0,
+        parsedInstruction,
         operation,
-        counter = 0,
         symbolTable = [],
         machineCode = [],
-        parsedInstruction,
-        currentInstruction,
-        didFindEnd = false,
-        code = source.replace(/(^[ \t]*\n)/gm, '').trim().split('\n');
+        processedCode = [],
+        code = source.replace(/;.*\n/g, '\n').replace(/(^[ \t]*\n)/gm, '').trim().split('\n'),
+        currentInstruction;
+
+    firstPass = function (instruction, didAddLabel, lineNumber, addressNumber) {
+
+        if (!didAddLabel) {
+
+            if (!Parse.instruction.hasOwnProperty(instruction[0])) {
+                symbolTable[instruction[0]] = addressNumber;
+                instruction.shift();
+                firstPass(instruction, true, lineNumber, addressNumber);
+            }
+
+        }
+
+        return instruction;
+
+    };
 
     // FIRST PASS
-    for (address = 0; address < code.length; address += 1) {
+    for (lineNumber = 0; lineNumber < code.length; lineNumber += 1) {
 
-        currentInstruction = Parse.line(code[address]);
+        AssemblerEvent.lineNumber(lineNumber);
+        currentInstruction = Parse.line(code[lineNumber]);
 
-        if (currentInstruction[0]) {
-
-            if (currentInstruction[0] === '.END') {
-                didFindEnd = true;
-                break;
-            }
-
-            if (!Parse.instruction.hasOwnProperty(currentInstruction[0].replace('.', '').toUpperCase() )) {
-                if (currentInstruction[0].indexOf('BR') < 0 ) {
-                    symbolTable[currentInstruction[0]] = counter;
-                    currentInstruction.shift();
-                }
-            }
-
-            operation = currentInstruction[0].indexOf('BR') >= 0 ? 'BR' : currentInstruction[0];
-
-            operation = operation.indexOf('.') >= 0 ? operation.replace('.', '') : operation;
-            operation = operation.toUpperCase();
-
-            if (Parse.instruction.hasOwnProperty(operation)) {
-
-                currentInstruction = Parse.instruction[operation](currentInstruction);
-
-                if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
-                    machineCode.push(currentInstruction);
-                    counter += 1;
-                }
-
-                if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
-                    machineCode = machineCode.concat(currentInstruction);
-                    counter += currentInstruction.length;
-                }
-
-            }
+        if (currentInstruction[0] === '.END') {
+            didFindEnd = true;
+            break;
         }
+
+        currentInstruction = firstPass(currentInstruction, false, lineNumber, addressNumber);
+        operation = currentInstruction[0];
+
+        if (lineNumber === 0 && operation !== '.ORIG') {
+            AssemblerEvent.emit('error', ['Expected ".ORIG" but found "' + operation + '".']);
+        }
+
+        if (!Parse.instruction.hasOwnProperty(operation)) {
+            AssemblerEvent.emit('error', ['Unknown operation "' + operation + '".']);
+            didFindEnd = true;
+            break;
+        }
+
+        currentInstruction = Parse.instruction[operation](currentInstruction);
+
+        if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
+            machineCode[lineNumber] = [currentInstruction];
+            addressNumber += 1;
+        }
+
+        if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
+            machineCode[lineNumber] = currentInstruction;
+            addressNumber += currentInstruction.length;
+        }
+
     }
 
     if (!didFindEnd) {
-        AssemblerEvent.emit('error', ['Expected .END at end of file']);
+        AssemblerEvent.emit('error', ['Expected .END']);
     }
 
     // SECOND PASS
-    for (address = 0; address < machineCode.length; address += 1) {
+    for (lineNumber = 0; lineNumber < machineCode.length; lineNumber += 1) {
 
-        if (machineCode[address].hasOwnProperty('labelOffset')) {
+        AssemblerEvent.lineNumber(lineNumber);
 
-            parsedInstruction = Parse.label(
-                machineCode[address].instruction,
-                machineCode[address].labelOffset,
-                symbolTable,
-                address
-            );
+        for (var i = 0; i < machineCode[lineNumber].length; i += 1) {
 
-            if (parsedInstruction === machineCode[address].instruction) {
-                AssemblerEvent.emit('error', ['instruction references an undefined label.']);
+            if (machineCode[lineNumber][i].hasOwnProperty('labelOffset')) {
+
+                parsedInstruction = Parse.label(
+                    machineCode[lineNumber][i].instruction,
+                    machineCode[lineNumber][i].labelOffset,
+                    symbolTable,
+                    lineNumber + i
+                );
+
+                if (parsedInstruction === machineCode[lineNumber][i].instruction) {
+                    AssemblerEvent.emit('error', ['instruction references an undefined label.']);
+                }
+
+                processedCode.push(parsedInstruction);
+
+            } else {
+                processedCode.push(machineCode[lineNumber][i].instruction);
             }
 
-            machineCode[address] = parsedInstruction;
-
-        } else {
-            machineCode[address] = machineCode[address].instruction;
         }
-
     }
 
-    this.machineCode = machineCode;
+    this.machineCode = processedCode;
     return this;
 };
 
