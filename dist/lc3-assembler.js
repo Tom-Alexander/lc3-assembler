@@ -34,87 +34,106 @@
          */
         Assembler.prototype.run = function (source) {
 
-            var address,
+            var firstPass,
+                lineNumber,
+                didFindEnd = false,
+                addressNumber = 0,
+                parsedInstruction,
                 operation,
-                counter = 0,
                 symbolTable = [],
                 machineCode = [],
-                parsedInstruction,
-                currentInstruction,
-                didFindEnd = false,
-                code = source.replace(/(^[ \t]*\n)/gm, '').trim().split('\n');
+                processedCode = [],
+                code = source.replace(/;.*\n/g, '\n').replace(/(^[ \t]*\n)/gm, '').trim().split('\n'),
+                currentInstruction;
+
+            firstPass = function (instruction, didAddLabel, lineNumber, addressNumber) {
+
+                if (!didAddLabel) {
+
+                    if (!Parse.instruction.hasOwnProperty(instruction[0])) {
+                        symbolTable[instruction[0]] = addressNumber;
+                        instruction.shift();
+                        firstPass(instruction, true, lineNumber, addressNumber);
+                    }
+
+                }
+
+                return instruction;
+
+            };
 
             // FIRST PASS
-            for (address = 0; address < code.length; address += 1) {
+            for (lineNumber = 0; lineNumber < code.length; lineNumber += 1) {
 
-                currentInstruction = Parse.line(code[address]);
+                AssemblerEvent.lineNumber(lineNumber);
+                currentInstruction = Parse.line(code[lineNumber]);
 
-                if (currentInstruction[0]) {
-
-                    if (currentInstruction[0] === '.END') {
-                        didFindEnd = true;
-                        break;
-                    }
-
-                    if (!Parse.instruction.hasOwnProperty(currentInstruction[0].replace('.', '').toUpperCase() )) {
-                        if (currentInstruction[0].indexOf('BR') < 0 ) {
-                            symbolTable[currentInstruction[0]] = counter;
-                            currentInstruction.shift();
-                        }
-                    }
-
-                    operation = currentInstruction[0].indexOf('BR') >= 0 ? 'BR' : currentInstruction[0];
-
-                    operation = operation.indexOf('.') >= 0 ? operation.replace('.', '') : operation;
-                    operation = operation.toUpperCase();
-
-                    if (Parse.instruction.hasOwnProperty(operation)) {
-
-                        currentInstruction = Parse.instruction[operation](currentInstruction);
-
-                        if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
-                            machineCode.push(currentInstruction);
-                            counter += 1;
-                        }
-
-                        if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
-                            machineCode = machineCode.concat(currentInstruction);
-                            counter += currentInstruction.length;
-                        }
-
-                    }
+                if (currentInstruction[0] === '.END') {
+                    didFindEnd = true;
+                    break;
                 }
+
+                currentInstruction = firstPass(currentInstruction, false, lineNumber, addressNumber);
+                operation = currentInstruction[0];
+
+                if (lineNumber === 0 && operation !== '.ORIG') {
+                    AssemblerEvent.emit('error', ['Expected ".ORIG" but found "' + operation + '".']);
+                }
+
+                if (!Parse.instruction.hasOwnProperty(operation)) {
+                    AssemblerEvent.emit('error', ['Unknown operation "' + operation + '".']);
+                    didFindEnd = true;
+                    break;
+                }
+
+                currentInstruction = Parse.instruction[operation](currentInstruction);
+
+                if (typeof currentInstruction.instruction === 'string' || currentInstruction.instruction instanceof String) {
+                    machineCode[lineNumber] = [currentInstruction];
+                    addressNumber += 1;
+                }
+
+                if (Object.prototype.toString.call(currentInstruction) === '[object Array]') {
+                    machineCode[lineNumber] = currentInstruction;
+                    addressNumber += currentInstruction.length;
+                }
+
             }
 
             if (!didFindEnd) {
-                AssemblerEvent.emit('error', ['Expected .END at end of file']);
+                AssemblerEvent.emit('error', ['Expected .END']);
             }
 
             // SECOND PASS
-            for (address = 0; address < machineCode.length; address += 1) {
+            for (lineNumber = 0; lineNumber < machineCode.length; lineNumber += 1) {
 
-                if (machineCode[address].hasOwnProperty('labelOffset')) {
+                AssemblerEvent.lineNumber(lineNumber);
 
-                    parsedInstruction = Parse.label(
-                        machineCode[address].instruction,
-                        machineCode[address].labelOffset,
-                        symbolTable,
-                        address
-                    );
+                for (var i = 0; i < machineCode[lineNumber].length; i += 1) {
 
-                    if (parsedInstruction === machineCode[address].instruction) {
-                        AssemblerEvent.emit('error', ['instruction references an undefined label.']);
+                    if (machineCode[lineNumber][i].hasOwnProperty('labelOffset')) {
+
+                        parsedInstruction = Parse.label(
+                            machineCode[lineNumber][i].instruction,
+                            machineCode[lineNumber][i].labelOffset,
+                            symbolTable,
+                            lineNumber + i
+                        );
+
+                        if (parsedInstruction === machineCode[lineNumber][i].instruction) {
+                            AssemblerEvent.emit('error', ['instruction references an undefined label.']);
+                        }
+
+                        processedCode.push(parsedInstruction);
+
+                    } else {
+                        processedCode.push(machineCode[lineNumber][i].instruction);
                     }
 
-                    machineCode[address] = parsedInstruction;
-
-                } else {
-                    machineCode[address] = machineCode[address].instruction;
                 }
-
             }
 
-            this.machineCode = machineCode;
+            this.machineCode = processedCode;
             return this;
         };
 
@@ -138,6 +157,7 @@
     "use strict";
 
     var AssemblerEvent = {},
+        currentLineNumber = null,
         eventStack = {};
 
     /**
@@ -168,6 +188,8 @@
 
         var i;
 
+        params.push(currentLineNumber);
+
         if (eventStack.hasOwnProperty(eventName)) {
 
             for (i = 0; i < eventStack[eventName].length; i += 1) {
@@ -176,6 +198,22 @@
         }
 
         return this;
+    };
+
+    /**
+     * get and/or set the current line number
+     *
+     * @param number
+     * @returns {number}
+     */
+    AssemblerEvent.lineNumber = function (number) {
+
+        if (number !== null) {
+            currentLineNumber = number;
+        }
+
+        return currentLineNumber;
+
     };
 
     module.exports = AssemblerEvent;
@@ -214,12 +252,12 @@
 
         parameterMismatch(instruction.length, 4);
 
-        var DR  =   Parse.registers(instruction[1]),
-            SR1 =   Parse.registers(instruction[2]),
-            SR2 =   Parse.registers(instruction[3]),
-            imm5 =  Parse.number(instruction[3], 5);
+        var DR = Parse.registers(instruction[1]),
+            SR1 = Parse.registers(instruction[2]),
+            isImmediate = instruction[3].indexOf('R') < 0,
+            SR2;
 
-        SR2 = imm5 ? '1' + imm5 : '000' + SR2;
+        SR2 = isImmediate ? '1' + Parse.number(instruction[3], 5) : '000' + Parse.registers(instruction[3]);
         return {instruction: '0001' + DR + SR1 + SR2};
     };
 
@@ -237,10 +275,10 @@
 
         var DR  =   Parse.registers(instruction[1]),
             SR1 =   Parse.registers(instruction[2]),
-            SR2 =   Parse.registers(instruction[3]),
-            imm5 =  Parse.number(instruction[3], 5);
+            isImmediate = instruction[3].indexOf('R') < 0,
+            SR2;
 
-        SR2 = imm5 ? '1' + imm5 : '000' + SR2;
+        SR2 = isImmediate ? '1' + Parse.number(instruction[3], 5) : '000' + Parse.registers(instruction[3]);
         return {instruction: '0101' + DR + SR1 + SR2};
     };
 
@@ -253,14 +291,14 @@
      */
     Parse.instruction.BR = function (instruction) {
 
-        parameterMismatch(instruction.length, 2);
+        parameterMismatch(instruction.length, 3);
 
         var condition = [0, 0, 0],
-            PCOffset9 = instruction[1];
+            PCOffset9 = instruction[2];
 
-        condition[0] = instruction[0].indexOf('n') >= 0 ? 1 : 0;
-        condition[1] = instruction[0].indexOf('z') >= 0 ? 1 : 0;
-        condition[2] = instruction[0].indexOf('p') >= 0 ? 1 : 0;
+        condition[0] = instruction[1].indexOf('n') >= 0 ? 1 : 0;
+        condition[1] = instruction[1].indexOf('z') >= 0 ? 1 : 0;
+        condition[2] = instruction[1].indexOf('p') >= 0 ? 1 : 0;
 
         return {instruction: '0000' + condition.join('') + PCOffset9, labelOffset: 9};
     };
@@ -288,6 +326,8 @@
      * @returns {}
      */
     Parse.instruction.JSR = function (instruction) {
+        parameterMismatch(instruction.length, 2);
+
         return {instruction: '01001' + instruction[1], labelOffset: 11};
     };
 
@@ -299,6 +339,8 @@
      * @returns {}
      */
     Parse.instruction.JSRR = function (instruction) {
+        parameterMismatch(instruction.length, 2);
+
         var baseR = Parse.registers(instruction[1]);
         return {instruction: '0100000' + baseR + '000000'};
     };
@@ -311,6 +353,8 @@
      * @returns {}
      */
     Parse.instruction.LD = function (instruction) {
+        parameterMismatch(instruction.length, 3);
+
         var DR = Parse.registers(instruction[1]),
             PCOffset9 = Parse.number(instruction[2], 9);
 
@@ -325,6 +369,8 @@
      * @returns {}
      */
     Parse.instruction.LDI = function (instruction) {
+        parameterMismatch(instruction.length, 3);
+
         var DR = Parse.registers(instruction[1]),
             PCOffset9 = Parse.number(instruction[2], 9);
 
@@ -338,6 +384,8 @@
      * @returns {}
      */
     Parse.instruction.LDR = function (instruction) {
+        parameterMismatch(instruction.length, 4);
+
         var DR  = Parse.registers(instruction[1]),
             baseR = Parse.registers(instruction[2]),
             offset6 = Parse.number(instruction[3], 6);
@@ -352,6 +400,8 @@
      * @returns {}
      */
     Parse.instruction.LEA = function (instruction) {
+        parameterMismatch(instruction.length, 3);
+
         var DR = Parse.registers(instruction[1]),
             PCOffset9 = instruction[2];
 
@@ -379,7 +429,10 @@
      *
      * @returns {}
      */
-    Parse.instruction.RET = function () {
+    Parse.instruction.RET = function (instruction) {
+
+        parameterMismatch(instruction.length, 1);
+
         return {instruction: '1100000111000000'};
     };
 
@@ -388,7 +441,9 @@
      *
      * @returns {}
      */
-    Parse.instruction.RTI = function () {
+    Parse.instruction.RTI = function (instruction) {
+        parameterMismatch(instruction.length, 1);
+
         return {instruction: '1000000000000000'};
     };
 
@@ -434,7 +489,7 @@
 
         var DR  = Parse.registers(instruction[1]),
             baseR = Parse.registers(instruction[2]),
-            offset6 = Parse.number(instruction[3], 6);
+            offset6 = instruction[3];
 
         return {instruction: '0111' + DR + baseR + offset6, labelOffset: 6};
     };
@@ -445,7 +500,9 @@
      * @returns {}
      */
     Parse.instruction.TRAP = function (instruction) {
+
         parameterMismatch(instruction.length, 2);
+
         var trapVector8 = Parse.number(instruction[1], 8);
         return {instruction: '11110000' + trapVector8};
     };
@@ -460,7 +517,8 @@
      * @param instruction
      * @returns {}
      */
-    Parse.instruction.ORIG = function (instruction) {
+    Parse.instruction['.ORIG'] = function (instruction) {
+        parameterMismatch(instruction.length, 2);
         return {instruction: Parse.number('0d' + instruction[1], 16)};
     };
 
@@ -469,7 +527,9 @@
      * @param instruction
      * @returns {}
      */
-    Parse.instruction.FILL = function (instruction) {
+    Parse.instruction['.FILL'] = function (instruction) {
+        parameterMismatch(instruction.length, 2);
+
         return {instruction: Parse.number('0d' + instruction[1], 16)};
     };
 
@@ -478,9 +538,11 @@
      * @param instruction
      * @returns {}
      */
-    Parse.instruction.BLKW = function (instruction) {
+    Parse.instruction['.BLKW'] = function (instruction) {
         var instructions = [],
             i;
+
+        parameterMismatch(instruction.length, 2);
 
         for (i = 0; i < instruction[1]; i += 1) {
             instructions.push({instruction: Parse.number('0d0', 16)});
@@ -495,10 +557,12 @@
      * @param instruction
      * @returns {}
      */
-    Parse.instruction.STRINGZ = function (instruction) {
+    Parse.instruction['.STRINGZ'] = function (instruction) {
         var i,
             instructions = [],
             value = instruction[1].replace(/["]/g, '');
+
+        parameterMismatch(instruction.length, 2);
 
         for (i = 0; i < value.length; i += 1) {
             instructions.push({instruction: Parse.number('0d' + value.charCodeAt(i), 16)});
@@ -513,19 +577,23 @@
      *
      * @returns {}
      */
-    Parse.instruction.GETC = function () {
+    Parse.instruction.GETC = function (instruction) {
+        parameterMismatch(instruction.length, 1);
         return {instruction: '11110000' + '00100000'};
     };
 
-    Parse.instruction.OUT = function () {
+    Parse.instruction.OUT = function (instruction) {
+        parameterMismatch(instruction.length, 1);
         return {instruction: '11110000' + '00100001'};
     };
 
-    Parse.instruction.PUTS = function () {
+    Parse.instruction.PUTS = function (instruction) {
+        parameterMismatch(instruction.length, 1);
         return {instruction: '11110000' + '00100010'};
     };
 
-    Parse.instruction.HALT = function () {
+    Parse.instruction.HALT = function (instruction) {
+        parameterMismatch(instruction.length, 1);
         return {instruction: '11110000' + '00100011'};
     };
 
@@ -538,13 +606,28 @@
      */
     Parse.line = function (line) {
 
+        var quotedStrings;
         line = line.replace(/\s*(,|^|$)\s*/g, "$1");
+
+        if (line.indexOf('BR') >= 0) {
+            line = line.slice(line.indexOf('BR'), line.indexOf('BR') + 2) + ',' + line.slice(line.indexOf('BR') + 2);
+        }
+
+        quotedStrings = line.match(/"(.*?)"/g);
+
+        if (quotedStrings) {
+            line = line.replace(quotedStrings[0], '{}');
+        }
 
         if (line.indexOf(';') >= 0) {
             line = line.substring(0, line.indexOf(';')).trim();
         }
 
         line = line.replace(/[ ]/g, ',').trim();
+
+        if (quotedStrings) {
+            line = line.replace('{}', quotedStrings[0]);
+        }
 
         return line.split(',');
     };
@@ -557,9 +640,33 @@
      * @returns {String}
      */
     Parse.registers = function (register) {
-        return register.indexOf('R') >= 0 || register.indexOf('r') >= 0 ? this.number('0d' + register.substring(1, 2), 3) : '';
+
+        var parsedRegister = '';
+
+        if (register.indexOf('R') >= 0 || register.indexOf('r') >= 0) {
+
+            parsedRegister = this.number('0d' + register.substring(1, 2), 3);
+
+            if (parseInt(parsedRegister, 2) > 7 || parseInt(parsedRegister, 2) < 0) {
+                AssemblerEvent.emit('error', ['Unknown register "' + register + '".']);
+            }
+
+        } else {
+            AssemblerEvent.emit('error', ['Unknown register "' + register + '".']);
+        }
+
+        return parsedRegister;
+
     };
 
+    /**
+     * Converts a string into a signed binary integer
+     * in a certain number of bits
+     *
+     * @param string
+     * @param space
+     * @returns {*|string}
+     */
     Parse.number = function (string, space) {
 
         var typed, value, isNegative;
@@ -585,12 +692,12 @@
                     value = value.slice(32 - space);
                 }
             } else {
-                AssemblerEvent.emit('error', [string + ' cannot be represented as a ' +
+                AssemblerEvent.emit('error', ['"' + string + '" cannot be represented as a ' +
                     'signed number in ' + space + ' bits.']);
             }
 
         } else {
-            AssemblerEvent.emit('error', ['Expected number but found ' + string + 'instead']);
+            AssemblerEvent.emit('error', ['Expected number but found "' + string + '" instead']);
         }
 
         return value || '';
@@ -627,12 +734,12 @@
      * does not match the number of parameters
      * required
      *
-     * @param parameters
-     * @param normal
+     * @param supplied
+     * @param required
      */
-    parameterMismatch = function (parameters, normal) {
+    parameterMismatch = function (supplied, required) {
 
-        if (parameters !== normal) {
+        if (supplied !== required) {
             AssemblerEvent.emit('error', ['The number of parameters ' +
                 'supplied does not match the number of parameters ' +
                 'required.']);
